@@ -2,10 +2,12 @@ import { NpcLoader, NpcDef } from '../data/NpcLoader';
 import { BitBuffer } from '../network/protocol/bitBuffer';
 import { Client, clearClientSpawnFallbackTimer, createKeepTutorialState } from '../core/Client';
 import { BitReader } from '../network/protocol/bitReader';
+import { DebugConfig } from '../core/Debug';
 import { GlobalState } from '../core/GlobalState';
 import { Entity, EntityProps, EntityState } from '../core/Entity';
 import { LevelConfig } from '../core/LevelConfig';
 import { PetHandler } from './PetHandler';
+import { BuildingHandler } from './BuildingHandler';
 import { areClientsInSameParty, getPartyIdForClient, sharesRoomIds } from '../core/PartySync';
 import { areClientsInSameLevelScope, getClientLevelScope, getLevelScopeKey } from '../core/LevelScope';
 
@@ -159,7 +161,9 @@ export class EntityHandler {
         entity: any
     ): boolean {
         if (!levelName || !levelMap || !EntityHandler.isSharedClientSpawnRegionActor(levelName, entity)) {
-            console.log(`[Dedup] SKIP: isSharedClientSpawnRegionActor=false for ${entity?.name} in ${levelName} (clientSpawned=${entity?.clientSpawned}, team=${entity?.team})`);
+            if (DebugConfig.enabled) {
+                console.log(`[Dedup] SKIP: isSharedClientSpawnRegionActor=false for ${entity?.name} in ${levelName} (clientSpawned=${entity?.clientSpawned}, team=${entity?.team})`);
+            }
             return false;
         }
 
@@ -176,16 +180,19 @@ export class EntityHandler {
             client.token
         );
         if (!canonical) {
-            console.log(`[Dedup] NO MATCH for ${entity?.name} (id=${entity?.id}, team=${entity?.team}) in ${levelName}. LevelMap has ${levelMap.size} entities. PartyId=${partyId}, ownerToken=${client.token}`);
-            // List candidates for debugging
-            for (const [cId, c] of levelMap.entries()) {
-                if (c?.clientSpawned && !c?.isPlayer) {
-                    console.log(`[Dedup]   candidate id=${cId} name=${c?.name} team=${c?.team} ownerToken=${c?.ownerToken} ownerPartyId=${c?.ownerPartyId}`);
+            if (DebugConfig.enabled) {
+                console.log(`[Dedup] NO MATCH for ${entity?.name} (id=${entity?.id}, team=${entity?.team}) in ${levelName}. LevelMap has ${levelMap.size} entities. PartyId=${partyId}, ownerToken=${client.token}`);
+                for (const [cId, c] of levelMap.entries()) {
+                    if (c?.clientSpawned && !c?.isPlayer) {
+                        console.log(`[Dedup]   candidate id=${cId} name=${c?.name} team=${c?.team} ownerToken=${c?.ownerToken} ownerPartyId=${c?.ownerPartyId}`);
+                    }
                 }
             }
             return false;
         }
-        console.log(`[Dedup] MATCH found! ${entity?.name} (id=${entity?.id}) -> canonical id=${canonical?.id} ownerToken=${canonical?.ownerToken}`);
+        if (DebugConfig.enabled) {
+            console.log(`[Dedup] MATCH found! ${entity?.name} (id=${entity?.id}) -> canonical id=${canonical?.id} ownerToken=${canonical?.ownerToken}`);
+        }
 
         const duplicateId = Number(entity?.id ?? 0);
         const canonicalId = Number(canonical?.id ?? 0);
@@ -958,7 +965,7 @@ export class EntityHandler {
             return;
         }
 
-        if (!isPlayer && levelName) {
+        if (!isPlayer && levelName && DebugConfig.enabled) {
             console.log(`[EntityHandler] Non-player entity ACCEPTED: id=${entityId} name=${entName} team=${team} from ${client.character?.name} in ${levelName} scope=${getClientLevelScope(client)} levelMap.size=${levelMap?.size ?? 'null'}`);
         }
 
@@ -983,6 +990,7 @@ export class EntityHandler {
              EntityHandler.sendExistingPlayersToJoiner(client);
              EntityHandler.broadcastPlayerSpawn(client, props);
              EntityHandler.broadcastPlayerMountState(client, props.id, equippedMountId);
+             BuildingHandler.refreshCraftTownBuildingsOnSpawn(client);
         }
     }
 

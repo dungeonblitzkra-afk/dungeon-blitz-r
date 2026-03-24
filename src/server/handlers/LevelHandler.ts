@@ -9,6 +9,7 @@ import { BitBuffer } from '../network/protocol/bitBuffer';
 import { BitReader } from '../network/protocol/bitReader';
 import { LevelConfig } from '../core/LevelConfig';
 import { GlobalState, PendingTransfer } from '../core/GlobalState';
+import { DebugLogger } from '../core/Debug';
 import { WorldEnter } from '../utils/WorldEnter';
 import { Config } from '../core/config';
 import { MissionLoader } from '../data/MissionLoader';
@@ -16,6 +17,7 @@ import { NpcLoader, NpcDef } from '../data/NpcLoader';
 import { MissionID } from '../data/runtime';
 import { Entity, EntityTeam } from '../core/Entity';
 import { EntityHandler } from './EntityHandler';
+import { MissionHandler } from './MissionHandler';
 import { JsonAdapter } from '../database/JsonAdapter';
 import { normalizeCharacterKey, PendingTeleport } from '../core/SocialState';
 import { TransferTokenAllocator } from '../core/TransferTokenAllocator';
@@ -56,6 +58,35 @@ export class LevelHandler {
         'That was the last of our Monster Fleet!'
     ]);
     private static readonly GOBLIN_RIVER_BOSS_INTRO_DEFAULT_MS = 5000;
+
+    private static resolveTransferSourceLevel(client: Client, character: any): string {
+        // Keep-clear flows intentionally preserve the safe return point in Character.CurrentLevel
+        // until the actual exit transfer runs, so the live session level must win here.
+        return LevelConfig.normalizeLevelName(
+            client.currentLevel || character?.CurrentLevel?.name || 'NewbieRoad'
+        ) || 'NewbieRoad';
+    }
+
+    private static resolveCraftTownReturnLevel(
+        client: Client,
+        character: any,
+        oldLevel: string,
+        syncState: LevelSyncState | null
+    ): string {
+        return LevelConfig.resolveSafeReturnLevel(
+            [
+                syncState?.syncEntryLevel,
+                client.entryLevel,
+                character?.PreviousLevel?.name,
+                oldLevel,
+                character?.CurrentLevel?.name
+            ],
+            {
+                fallbackLevel: 'NewbieRoad',
+                excludedLevels: ['CraftTown']
+            }
+        );
+    }
 
     private static cloneTransferGameplayState(target: Client, source: Client): void {
         target.character = source.character;
@@ -476,7 +507,9 @@ export class LevelHandler {
         let syncAnchorStartedAt = shouldSyncDungeonProgress
             ? LevelHandler.normalizeSyncAnchorStartedAt(client.syncAnchorStartedAt)
             : undefined;
-        let syncEntryLevel = shouldSyncDungeonProgress ? LevelConfig.normalizeLevelName(teleportOverride?.syncEntryLevel) : undefined;
+        let syncEntryLevel = shouldSyncDungeonProgress
+            ? LevelConfig.normalizeLevelName(teleportOverride?.syncEntryLevel ?? client.entryLevel)
+            : undefined;
         let syncRoomId = shouldSyncDungeonProgress &&
             Number.isFinite(Number(teleportOverride?.syncRoomId)) &&
             Number(teleportOverride?.syncRoomId) >= 0
@@ -1655,6 +1688,9 @@ export class LevelHandler {
             delete missions[String(LevelHandler.FIRST_KEEP_MISSION_ID)].complete;
             client.character.missions = missions;
             client.character.questTrackerState = 0;
+            DebugLogger.logProgress('CraftTownTutorial:bootstrapMission', client, client.character, {
+                missionId: LevelHandler.FIRST_KEEP_MISSION_ID
+            });
 
             LevelHandler.sendMissionAdded(client, LevelHandler.FIRST_KEEP_MISSION_ID);
             LevelHandler.sendQuestProgress(client, 0);
@@ -2037,7 +2073,11 @@ export class LevelHandler {
             client.userId = usedEntry.userId;
             client.currentLevel = usedEntry.targetLevel;
             client.levelInstanceId = normalizeLevelInstanceId(usedEntry.levelInstanceId);
-            client.entryLevel = usedEntry.previousLevel;
+            client.entryLevel = LevelConfig.resolveDungeonEntryLevel(
+                usedEntry.targetLevel,
+                usedEntry.previousLevel,
+                usedEntry.character
+            );
             client.syncAnchorStartedAt = LevelHandler.normalizeSyncAnchorStartedAt(usedEntry.syncAnchorStartedAt) ?? 0;
             client.syncAnchorToken = Number(usedEntry.syncAnchorToken ?? 0) > 0 ? Math.round(Number(usedEntry.syncAnchorToken)) : 0;
             client.syncAnchorCharacterName = String(usedEntry.syncAnchorCharacterName ?? '').trim();
@@ -2087,7 +2127,11 @@ export class LevelHandler {
             client.userId = pendingEntry.userId;
             client.currentLevel = pendingEntry.targetLevel;
             client.levelInstanceId = normalizeLevelInstanceId(pendingEntry.levelInstanceId);
-            client.entryLevel = pendingEntry.previousLevel;
+            client.entryLevel = LevelConfig.resolveDungeonEntryLevel(
+                pendingEntry.targetLevel,
+                pendingEntry.previousLevel,
+                pendingEntry.character
+            );
             client.syncAnchorStartedAt = LevelHandler.normalizeSyncAnchorStartedAt(pendingEntry.syncAnchorStartedAt) ?? 0;
             client.syncAnchorToken = Number(pendingEntry.syncAnchorToken ?? 0) > 0 ? Math.round(Number(pendingEntry.syncAnchorToken)) : 0;
             client.syncAnchorCharacterName = String(pendingEntry.syncAnchorCharacterName ?? '').trim();
@@ -2229,8 +2273,8 @@ export class LevelHandler {
             targetLevel = "CraftTown";
         }
 
-        if (!targetLevel && LevelConfig.isDungeonLevel(currentLevel) && client.entryLevel) {
-            targetLevel = LevelConfig.normalizeLevelName(client.entryLevel);
+        if (!targetLevel && LevelConfig.isDungeonLevel(currentLevel)) {
+            targetLevel = LevelConfig.resolveDungeonEntryLevel(currentLevel, client.entryLevel, client.character);
         }
 
         if (!targetLevel) {
@@ -2251,12 +2295,35 @@ export class LevelHandler {
         }
     }
 
-    static handleQuestProgressUpdate(client: Client, data: Buffer): void {
+    static async handleQuestProgressUpdate(client: Client, data: Buffer): Promise<void> {
         const br = new BitReader(data);
-        const progress = br.readMethod4();
+        const requestedProgress = br.readMethod4();
+        const previousProgress = Number(client.character?.questTrackerState ?? 0);
+        let progress = requestedProgress;
+        const currentLevel = LevelConfig.normalizeLevelName(
+            client.currentLevel || String(client.character?.CurrentLevel?.name ?? '')
+        );
+
+        if (currentLevel === 'CraftTown' && previousProgress >= 100 && requestedProgress < 100) {
+            progress = previousProgress;
+        }
 
         if (client.character) {
             client.character.questTrackerState = progress;
+        }
+
+        DebugLogger.logProgress('QuestProgress:update', client, client.character, {
+            previousProgress,
+            requestedProgress,
+            progress
+        });
+
+        if (client.character && client.userId && progress !== previousProgress) {
+            await LevelHandler.saveCurrentCharacterSnapshot(client);
+            DebugLogger.logProgress('QuestProgress:saved', client, client.character, {
+                previousProgress,
+                progress
+            });
         }
 
         LevelHandler.relayToLevel(client, 0xB7, data);
@@ -2439,8 +2506,16 @@ export class LevelHandler {
 
         const syncState = LevelHandler.buildTransferSyncState(client, targetLevel, teleportOverride ?? null);
 
+        DebugLogger.logProgress('LevelTransfer:beforeSave', client, client.character, {
+            packetToken,
+            targetLevel
+        });
         await LevelHandler.saveCurrentCharacterSnapshot(client);
         await LevelHandler.refreshCurrentCharacterFromSave(client);
+        DebugLogger.logProgress('LevelTransfer:afterReload', client, client.character, {
+            packetToken,
+            targetLevel
+        });
 
         const activeCharacter = client.character;
         if (!activeCharacter) {
@@ -2448,8 +2523,7 @@ export class LevelHandler {
             return;
         }
 
-        const currentLevelRecord = activeCharacter.CurrentLevel;
-        const oldLevel = LevelConfig.normalizeLevelName(currentLevelRecord?.name || client.currentLevel || "NewbieRoad") || "NewbieRoad";
+        const oldLevel = LevelHandler.resolveTransferSourceLevel(client, activeCharacter);
         const ent = client.entities.get(client.clientEntID);
         let oldX = 0, oldY = 0;
         let hasOldCoord = false;
@@ -2493,9 +2567,11 @@ export class LevelHandler {
         }
 
         // 7. Store Pending Transfer State
-        const effectivePreviousLevel = LevelConfig.isDungeonLevel(targetLevel) && syncState?.syncEntryLevel
-            ? syncState.syncEntryLevel
-            : oldLevel;
+        const effectivePreviousLevel = targetLevel === 'CraftTown'
+            ? LevelHandler.resolveCraftTownReturnLevel(client, activeCharacter, oldLevel, syncState)
+            : LevelConfig.isDungeonLevel(targetLevel)
+                ? LevelConfig.normalizeLevelName(syncState?.syncEntryLevel) || oldLevel
+                : oldLevel;
         LevelHandler.storePendingTransferToken(
             newToken,
             activeCharacter,
@@ -2535,6 +2611,19 @@ export class LevelHandler {
             newHasCoord, newX, newY,
             hostChar
         );
+
+        DebugLogger.logProgress('EnterWorld:transferPacket', client, activeCharacter, {
+            previousLevel: oldLevel,
+            previousSwf: oldLevelSpec.swf,
+            targetLevel,
+            targetSwf: levelSpec.swf,
+            transferToken: newToken,
+            packetToken,
+            effectivePreviousLevel,
+            newHasCoord,
+            newX,
+            newY
+        });
 
         client.sendBitBuffer(0x21, pkt);
     }

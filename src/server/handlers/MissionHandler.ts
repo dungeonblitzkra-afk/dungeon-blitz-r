@@ -77,6 +77,14 @@ export class MissionHandler {
             didMutate = true;
         }
 
+        if (
+            MissionHandler.getMissionState(character, MissionID.ClearYourHouse) >= MissionHandler.MISSION_CLAIMED &&
+            Number(character.questTrackerState ?? 0) < 100
+        ) {
+            character.questTrackerState = 100;
+            didMutate = true;
+        }
+
         return { didMutate, addedMissionId };
     }
 
@@ -170,7 +178,7 @@ export class MissionHandler {
                 }
             }
 
-            if (MissionHandler.moveCharacterBackToSafeLevel(client.character, currentLevel)) {
+            if (currentLevel !== 'CraftTownTutorial' && MissionHandler.moveCharacterBackToSafeLevel(client.character, currentLevel)) {
                 didMutate = true;
             }
         }

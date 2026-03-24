@@ -2,6 +2,7 @@ import express from 'express';
 import type { Request } from 'express';
 import * as fs from 'fs';
 import * as path from 'path';
+import { Config } from '../core/config';
 
 interface DiscordRpcClient {
     on(
@@ -55,6 +56,38 @@ interface PresencePayload {
 
 const DEFAULT_PORT = 47631;
 const PARTY_MAX_MEMBERS = 4;
+
+function buildLocalPresenceEndpoint(pathname: string): string {
+    return `http://127.0.0.1:${Config.STATIC_PORT}${pathname}`;
+}
+
+function preferLocalDevUrl(rawUrl: string, pathname: string): string {
+    const trimmed = String(rawUrl ?? '').trim();
+    if (Config.MULTIPLAYER_MODE) {
+        return trimmed || buildLocalPresenceEndpoint(pathname);
+    }
+
+    if (!trimmed) {
+        return buildLocalPresenceEndpoint(pathname);
+    }
+
+    try {
+        const parsed = new URL(trimmed);
+        if (parsed.hostname === Config.MULTIPLAYER_HOST) {
+            parsed.protocol = 'http:';
+            parsed.hostname = '127.0.0.1';
+            parsed.port = String(Config.STATIC_PORT);
+            parsed.pathname = pathname;
+            parsed.search = '';
+            parsed.hash = '';
+            return parsed.toString();
+        }
+    } catch (_error) {
+        return buildLocalPresenceEndpoint(pathname);
+    }
+
+    return trimmed;
+}
 
 function resolveConfigPath(): string {
     const candidates = [
@@ -612,7 +645,7 @@ function readConfig(): BridgeConfig {
     const defaults: BridgeConfig = {
         appId: '',
         port: DEFAULT_PORT,
-        presenceUrl: 'http://127.0.0.1:8000/api/presence/discord-target',
+        presenceUrl: buildLocalPresenceEndpoint('/api/presence/discord-target'),
         joinUrl: '',
         characterName: '',
         pollMs: 4000,
@@ -633,8 +666,14 @@ function readConfig(): BridgeConfig {
     return {
         appId: String(raw.appId ?? defaults.appId).trim(),
         port: Number.isFinite(Number(raw.port)) ? Math.max(1, Math.round(Number(raw.port))) : defaults.port,
-        presenceUrl: String(raw.presenceUrl ?? defaults.presenceUrl).trim(),
-        joinUrl: String(raw.joinUrl ?? defaults.joinUrl).trim(),
+        presenceUrl: preferLocalDevUrl(
+            String(raw.presenceUrl ?? defaults.presenceUrl).trim(),
+            '/api/presence/discord-target'
+        ),
+        joinUrl: preferLocalDevUrl(
+            String(raw.joinUrl ?? defaults.joinUrl).trim(),
+            '/api/presence/discord-join'
+        ),
         characterName: String(raw.characterName ?? defaults.characterName).trim(),
         pollMs: Number.isFinite(Number(raw.pollMs)) ? Math.max(1000, Math.round(Number(raw.pollMs))) : defaults.pollMs,
         largeImageText: String(raw.largeImageText ?? defaults.largeImageText).trim(),

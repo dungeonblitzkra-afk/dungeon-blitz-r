@@ -16,9 +16,12 @@ type FakeClient = {
     token: number;
     character: { name: string };
     currentLevel: string;
+    levelInstanceId: string;
     currentRoomId: number;
     playerSpawned: boolean;
     clientEntID: number;
+    userId: number | null;
+    mountTransferGraceUntil: number;
     knownEntityIds: Set<number>;
     entities: Map<number, any>;
     sentPackets: SentPacket[];
@@ -48,9 +51,12 @@ function createFakeClient(name: string): FakeClient {
         token: nextFakeToken++,
         character: { name },
         currentLevel: 'NewbieRoad',
+        levelInstanceId: '',
         currentRoomId: 1,
         playerSpawned: true,
         clientEntID: 0,
+        userId: 1,
+        mountTransferGraceUntil: 0,
         knownEntityIds: new Set<number>(),
         entities: new Map<number, any>(),
         sentPackets,
