@@ -5,8 +5,8 @@
       "name": "Spepyluv",
       "class": "Paladin",
       "level": 1,
-      "xp": 61,
-      "gold": 186,
+      "xp": 74,
+      "gold": 322,
       "craftXP": 0,
       "DragonOre": 0,
       "mammothIdols": 0,
@@ -24,7 +24,7 @@
       "pantColor": 4528128,
       "equippedGears": [
         {
-          "gearID": 0,
+          "gearID": 638,
           "tier": 0,
           "runes": [
             0,
@@ -104,8 +104,8 @@
       ],
       "CurrentLevel": {
         "name": "NewbieRoad",
-        "x": 1421,
-        "y": 826
+        "x": 6061,
+        "y": 971
       },
       "PreviousLevel": {
         "name": "NewbieRoad",
@@ -138,6 +138,19 @@
             0,
             0
           ]
+        },
+        {
+          "gearID": 638,
+          "tier": 0,
+          "runes": [
+            0,
+            0,
+            0
+          ],
+          "colors": [
+            0,
+            0
+          ]
         }
       ],
       "gearSets": [],
@@ -149,11 +162,11 @@
       "materials": [
         {
           "materialID": 92,
-          "count": 2
+          "count": 3
         },
         {
           "materialID": 91,
-          "count": 1
+          "count": 2
         }
       ],
       "lockboxes": [
@@ -175,10 +188,16 @@
           "complete": 1
         },
         "2": {
-          "state": 2
+          "state": 3,
+          "claimed": 1,
+          "complete": 1
+        },
+        "3": {
+          "state": 1,
+          "currCount": 0
         }
       },
-      "questTrackerState": 1,
+      "questTrackerState": 11,
       "friends": [],
       "learnedAbilities": [
         {

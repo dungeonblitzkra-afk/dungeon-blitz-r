@@ -484,7 +484,11 @@ async function testHostileHitsLeavePlayersAliveAndStayRoomScoped(): Promise<void
         true,
         'same-room watchers should be seeded before receiving hostile combat packets'
     );
-    assert.equal(sameRoomWatcher.sentPackets.some((packet) => packet.id === 0x3A), true);
+    assert.equal(
+        sameRoomWatcher.sentPackets.some((packet) => packet.id === 0x3A),
+        false,
+        'hostile hits should not emit a separate HP delta because the power-hit packet already drives the client damage display'
+    );
     assert.equal(sameRoomWatcher.sentPackets.some((packet) => packet.id === 0x0A), true);
     assert.equal(
         sameRoomWatcher.sentPackets.some((packet) => packet.id === 0x07),
@@ -511,6 +515,11 @@ async function testHostileHitsLeavePlayersAliveAndStayRoomScoped(): Promise<void
         'local player should not receive its own 0x07 state echo because the Flash client treats it as a remote entity update'
     );
     assert.equal(
+        victim.sentPackets.some((packet) => packet.id === 0x3A),
+        false,
+        'local player should only receive the hostile power-hit packet so the damage is shown once'
+    );
+    assert.equal(
         partyOtherRoom.sentPackets.some((packet) => packet.id === 0x0A || packet.id === 0x3A || packet.id === 0x07),
         false,
         'party members in a different room should not receive hostile NPC combat packets from outside their room'
@@ -528,6 +537,58 @@ async function testHostileHitsLeavePlayersAliveAndStayRoomScoped(): Promise<void
     assert.equal(victim.entities.get(victim.clientEntID)?.dead, false);
     assert.equal(sameRoomWatcher.sentPackets.some((packet) => packet.id === 0x82), true);
     assert.equal(otherRoomStranger.sentPackets.some((packet) => packet.id === 0x82), true);
+}
+
+async function testHostileHitsDoNotEchoPowerHitBackToLocalVictimWhenDamageMatches(): Promise<void> {
+    const victim = createFakeClient(320, 'VictimEcho', 2);
+    const sameRoomWatcher = createFakeClient(321, 'WatcherEcho', 2);
+    const otherRoomWatcher = createFakeClient(322, 'WatcherOther', 9);
+
+    attachPlayerEntity(victim);
+    attachPlayerEntity(sameRoomWatcher);
+    attachPlayerEntity(otherRoomWatcher);
+
+    const npc = {
+        id: 8124,
+        name: 'EnemyGoblinLite',
+        isPlayer: false,
+        x: 24,
+        y: 20,
+        v: 0,
+        team: 2,
+        entState: EntityState.ACTIVE,
+        clientSpawned: true,
+        roomId: victim.currentRoomId,
+        hp: 100
+    };
+    GlobalState.levelEntities.get(getClientLevelScope(victim as never))?.set(npc.id, npc);
+
+    GlobalState.sessionsByToken.set(victim.token, victim as never);
+    GlobalState.sessionsByToken.set(sameRoomWatcher.token, sameRoomWatcher as never);
+    GlobalState.sessionsByToken.set(otherRoomWatcher.token, otherRoomWatcher as never);
+
+    await CombatHandler.handlePowerHit(victim as never, buildPowerHitPayload(victim.clientEntID, npc.id, 1, 55));
+
+    assert.equal(
+        victim.sentPackets.some((packet) => packet.id === 0x0A),
+        false,
+        'the local victim already simulated the hostile hit and should not receive a duplicate power-hit echo'
+    );
+    assert.equal(
+        victim.sentPackets.some((packet) => packet.id === 0x3A),
+        false,
+        'matching hostile damage should not need a follow-up HP correction packet'
+    );
+    assert.equal(
+        sameRoomWatcher.sentPackets.some((packet) => packet.id === 0x0A),
+        true,
+        'same-room viewers still need the hostile hit for synchronization'
+    );
+    assert.equal(
+        otherRoomWatcher.sentPackets.some((packet) => packet.id === 0x0A || packet.id === 0x3A),
+        false,
+        'other rooms should still stay isolated from hostile combat packets'
+    );
 }
 
 async function testEntityDestroyClearsKnownEntityCache(): Promise<void> {
@@ -733,6 +794,15 @@ async function main(): Promise<void> {
         GlobalState.entityLastRewardNonces.clear();
 
         await testHostileHitsLeavePlayersAliveAndStayRoomScoped();
+
+        GlobalState.sessionsByToken.clear();
+        GlobalState.levelEntities.clear();
+        GlobalState.partyByMember.clear();
+        GlobalState.combatContributions.clear();
+        GlobalState.entityLifeNonces.clear();
+        GlobalState.entityLastRewardNonces.clear();
+
+        await testHostileHitsDoNotEchoPowerHitBackToLocalVictimWhenDamageMatches();
 
         GlobalState.sessionsByToken.clear();
         GlobalState.levelEntities.clear();

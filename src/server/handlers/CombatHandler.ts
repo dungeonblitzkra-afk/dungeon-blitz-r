@@ -412,7 +412,8 @@ export class CombatHandler {
         sourceEntity: any,
         packetId: number,
         data: Buffer,
-        referencedEntityIds: number[] = []
+        referencedEntityIds: number[] = [],
+        excludedClient: Client | null = null
     ): void {
         if (!levelScope) {
             return;
@@ -422,7 +423,7 @@ export class CombatHandler {
         const dedupedRefs = Array.from(new Set(referencedEntityIds.filter((id) => Number.isFinite(id) && id > 0)));
 
         for (const other of GlobalState.sessionsByToken.values()) {
-            if (!other.playerSpawned || getClientLevelScope(other) !== levelScope) {
+            if (!other.playerSpawned || getClientLevelScope(other) !== levelScope || other === excludedClient) {
                 continue;
             }
             if (sourceRoomId >= 0 && !sharesRoomIds(other.currentRoomId, sourceRoomId)) {
@@ -917,13 +918,8 @@ export class CombatHandler {
             const resolution = CombatHandler.updatePlayerTargetAfterHit(targetSession, damage, preventDeath);
             relayDamage = resolution.appliedDamage;
 
-            if (resolution.appliedDamage > 0) {
-                const hpPayload = CombatHandler.buildHpDeltaPayload(targetSession.clientEntID, -resolution.appliedDamage);
-                if (isHostileNpcSource) {
-                    CombatHandler.broadcastEntityViewPacket(levelScope, sourceEntity, 0x3A, hpPayload, [targetSession.clientEntID, sourceId]);
-                } else {
-                    CombatHandler.broadcastPlayerHpDelta(targetSession, -resolution.appliedDamage);
-                }
+            if (resolution.appliedDamage > 0 && !isHostileNpcSource) {
+                CombatHandler.broadcastPlayerHpDelta(targetSession, -resolution.appliedDamage);
             }
 
             if (resolution.killed) {
@@ -943,7 +939,8 @@ export class CombatHandler {
 
         const relayPayload = relayDamage === damage ? data : CombatHandler.buildPowerHitPayload(info, relayDamage);
         if (isHostileNpcSource) {
-            CombatHandler.broadcastEntityViewPacket(levelScope, sourceEntity, 0x0A, relayPayload, [targetId, sourceId]);
+            const excludeLocalVictim = targetSession === client && relayDamage === damage ? client : null;
+            CombatHandler.broadcastEntityViewPacket(levelScope, sourceEntity, 0x0A, relayPayload, [targetId, sourceId], excludeLocalVictim);
             return;
         }
 
