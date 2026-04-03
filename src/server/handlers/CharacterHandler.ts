@@ -56,6 +56,24 @@ export class CharacterHandler {
         character.questTrackerState = 0;
     }
 
+    private static sendBootstrappedStoryMission(client: Client, missionId: number): void {
+        if (!client.character || missionId <= 0) {
+            return;
+        }
+
+        const missions = client.character.missions;
+        if (!missions || typeof missions !== 'object' || Array.isArray(missions)) {
+            return;
+        }
+
+        const state = Number((missions as Record<string, Record<string, unknown>>)[String(missionId)]?.state ?? 0);
+        if (state !== 1 && state !== 2) {
+            return;
+        }
+
+        MissionHandler.sendMissionAdded(client, missionId, state);
+    }
+
     private static normalizeCharacterName(value: string | null | undefined): string {
         return String(value || '').trim().toLowerCase();
     }
@@ -806,6 +824,7 @@ export class CharacterHandler {
         });
 
         MissionHandler.syncMissionStateToClient(client);
+        CharacterHandler.sendBootstrappedStoryMission(client, storyRepair.addedMissionId);
 
         SocialHandler.handleSessionReady(client);
         

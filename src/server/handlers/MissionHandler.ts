@@ -26,22 +26,13 @@ export class MissionHandler {
     private static readonly MISSION_READY_TO_TURN_IN = 2;
     private static readonly MISSION_CLAIMED = 3;
     private static readonly ACHIEVEMENT_MAMMOTH_IDOL_REWARD = 10;
-    private static readonly LOGIN_SYNC_MISSION_IDS = new Set<number>([
-        MissionID.DefendTheShip,
-        MissionID.MeetTheTown,
-        MissionID.RescueAnna,
-        MissionID.FindAnnasFather,
-        MissionID.ClearYourHouse,
-        MissionID.GoblinRiver
-    ]);
-    private static readonly DEFAULT_DUNGEON_TIER = 10;
-    private static readonly DEFAULT_DUNGEON_HIGHSCORE = 99999999;
 
     static repairEarlyStoryOnLogin(
         character: Character,
         currentLevelRaw: string
     ): { didMutate: boolean; addedMissionId: number } {
         const currentLevel = String(currentLevelRaw || character.CurrentLevel?.name || '');
+        const questProgress = Number(character.questTrackerState ?? 0);
         let didMutate = false;
         let addedMissionId = 0;
 
@@ -52,6 +43,7 @@ export class MissionHandler {
             mission1State === MissionHandler.MISSION_NOT_STARTED &&
             mission2State === MissionHandler.MISSION_NOT_STARTED &&
             (
+                questProgress >= 100 ||
                 currentLevel === 'TutorialBoat' ||
                 (
                     currentLevel === 'NewbieRoad' &&
@@ -60,12 +52,16 @@ export class MissionHandler {
             );
 
         if (shouldBootstrapMission1) {
+            const initialMission1State =
+                questProgress >= 100
+                    ? MissionHandler.MISSION_READY_TO_TURN_IN
+                    : MissionHandler.MISSION_IN_PROGRESS;
             MissionHandler.setMissionState(
                 character,
                 MissionID.DefendTheShip,
-                MissionHandler.MISSION_IN_PROGRESS,
+                initialMission1State,
                 MissionLoader.getMissionDef(MissionID.DefendTheShip),
-                { currCount: 0 }
+                { currCount: initialMission1State >= MissionHandler.MISSION_READY_TO_TURN_IN ? 1 : 0 }
             );
             if (character.questTrackerState == null) {
                 character.questTrackerState = 0;
@@ -74,12 +70,11 @@ export class MissionHandler {
             addedMissionId = MissionID.DefendTheShip;
         }
 
+        const repairedMission1State = MissionHandler.getMissionState(character, MissionID.DefendTheShip);
         if (
-            addedMissionId === 0 &&
-            currentLevel !== 'TutorialBoat' &&
             mission2State === MissionHandler.MISSION_NOT_STARTED &&
-            Number(character.questTrackerState ?? 0) >= 100 &&
-            mission1State >= MissionHandler.MISSION_IN_PROGRESS
+            questProgress >= 100 &&
+            repairedMission1State === MissionHandler.MISSION_IN_PROGRESS
         ) {
             MissionHandler.setMissionState(
                 character,
@@ -89,6 +84,27 @@ export class MissionHandler {
                 { currCount: 1 }
             );
             didMutate = true;
+        }
+
+        if (
+            currentLevel !== 'TutorialBoat' &&
+            mission2State === MissionHandler.MISSION_NOT_STARTED &&
+            MissionHandler.getMissionState(character, MissionID.DefendTheShip) >= MissionHandler.MISSION_CLAIMED
+        ) {
+            const mission2Def = MissionLoader.getMissionDef(MissionID.MeetTheTown);
+            if (mission2Def && MissionHandler.canStartMission(character, mission2Def)) {
+                MissionHandler.setMissionState(
+                    character,
+                    MissionID.MeetTheTown,
+                    MissionHandler.getInitialMissionState(mission2Def),
+                    mission2Def,
+                    { currCount: 0 }
+                );
+                didMutate = true;
+                if (addedMissionId === 0) {
+                    addedMissionId = MissionID.MeetTheTown;
+                }
+            }
         }
 
         if (MissionHandler.normalizeInstantReturnMissionStates(character)) {
@@ -112,39 +128,6 @@ export class MissionHandler {
         }
 
         MissionHandler.sendQuestProgress(client, Math.max(0, Number(client.character.questTrackerState ?? 0)));
-
-        const missions = MissionHandler.getMissionStateMap(client.character);
-        const missionIds = Object.keys(missions)
-            .map((value) => Number(value))
-            .filter((value) => Number.isFinite(value) && value > 0)
-            .sort((left, right) => left - right);
-
-        for (const missionId of missionIds) {
-            if (!MissionHandler.LOGIN_SYNC_MISSION_IDS.has(missionId)) {
-                continue;
-            }
-
-            const entry = MissionHandler.asMissionEntry(missions[String(missionId)]);
-            const state = Number(entry.state ?? MissionHandler.MISSION_NOT_STARTED);
-
-            if (state >= MissionHandler.MISSION_CLAIMED) {
-                MissionHandler.sendMissionComplete(client, missionId);
-                continue;
-            }
-
-            if (state === MissionHandler.MISSION_READY_TO_TURN_IN) {
-                MissionHandler.sendMissionAdded(client, missionId, MissionHandler.MISSION_READY_TO_TURN_IN);
-                continue;
-            }
-
-            if (state === MissionHandler.MISSION_IN_PROGRESS) {
-                MissionHandler.sendMissionAdded(client, missionId, MissionHandler.MISSION_IN_PROGRESS);
-                const progress = Math.max(0, Number(entry.currCount ?? 0));
-                if (progress > 0) {
-                    MissionHandler.sendMissionProgress(client, missionId, progress);
-                }
-            }
-        }
     }
 
     static async handleSetLevelComplete(client: Client, data: Buffer): Promise<void> {
@@ -219,30 +202,17 @@ export class MissionHandler {
 
         let completedMissionId = 0;
         if (clearedDungeon) {
-            completedMissionId = MissionHandler.completeActiveDungeonMission(client.character, currentLevel);
+            completedMissionId = MissionHandler.completeActiveDungeonMission(client.character, currentLevel, {
+                stars: Math.max(0, levelWidthScore),
+                score: Math.max(0, bonusScoreTotal),
+                completedAt: Math.floor(Date.now() / 1000)
+            });
             if (completedMissionId) {
                 didMutate = true;
                 MissionHandler.sendMissionComplete(client, completedMissionId);
 
                 const completedMissionDef = MissionLoader.getMissionDef(completedMissionId);
                 const completedMissionState = MissionHandler.getMissionState(client.character, completedMissionId);
-
-                if (completedMissionId === MissionID.RescueAnna) {
-                    const contactNpc = 'Anna';
-                    const addedMissionId = MissionHandler.autoAcceptFollowupMission(
-                        client.character,
-                        contactNpc,
-                        completedMissionId
-                    );
-                    if (addedMissionId) {
-                        didMutate = true;
-                        MissionHandler.sendMissionAdded(
-                            client,
-                            addedMissionId,
-                            MissionHandler.getMissionState(client.character, addedMissionId)
-                        );
-                    }
-                }
 
                 if (
                     completedMissionId !== MissionID.DefendTheShip &&
@@ -316,7 +286,15 @@ export class MissionHandler {
         await MissionHandler.saveCharacter(client);
     }
 
-    private static completeActiveDungeonMission(character: Character, currentLevel: string): number {
+    private static completeActiveDungeonMission(
+        character: Character,
+        currentLevel: string,
+        completion: {
+            stars: number;
+            score: number;
+            completedAt: number;
+        }
+    ): number {
         const missions = MissionHandler.getMissionStateMap(character);
 
         for (const [missionIdText, rawEntry] of Object.entries(missions)) {
@@ -340,7 +318,10 @@ export class MissionHandler {
                 : MissionHandler.MISSION_CLAIMED;
 
             MissionHandler.setMissionState(character, missionId, completionState, missionDef, {
-                currCount: Math.max(1, Number(missionDef.CompleteCount ?? 1))
+                currCount: Math.max(1, Number(missionDef.CompleteCount ?? 1)),
+                Tier: completion.stars,
+                highscore: completion.score,
+                Time: completion.completedAt
             });
             return missionId;
         }
@@ -632,10 +613,8 @@ export class MissionHandler {
         }
 
         if ((missionDef?.Time ?? false) && state >= MissionHandler.MISSION_READY_TO_TURN_IN) {
-            next.Tier = Number(extra.Tier ?? next.Tier ?? MissionHandler.DEFAULT_DUNGEON_TIER);
-            next.highscore = Number(
-                extra.highscore ?? next.highscore ?? MissionHandler.DEFAULT_DUNGEON_HIGHSCORE
-            );
+            next.Tier = Number(extra.Tier ?? next.Tier ?? 0);
+            next.highscore = Number(extra.highscore ?? next.highscore ?? 0);
             next.Time = Number(extra.Time ?? next.Time ?? Math.floor(Date.now() / 1000));
         }
 

@@ -130,6 +130,42 @@ export class WorldEnter {
         return normalized;
     }
 
+    private static writeMissionState(
+        bb: BitBuffer,
+        missionDef: MissionDef | undefined,
+        missionState: Record<string, any>
+    ): void {
+        const state = Number(missionState.state ?? 0);
+
+        if (missionDef?.Tier) {
+            bb.writeMethod11(state >= 3 ? 1 : 0, 1);
+            return;
+        }
+
+        const hasEntry = state !== 0;
+        bb.writeMethod11(hasEntry ? 1 : 0, 1);
+        if (!hasEntry) {
+            return;
+        }
+
+        const isReady = state >= 2;
+        bb.writeMethod11(isReady ? 1 : 0, 1);
+        if (!isReady) {
+            if ((missionDef?.highscore ?? 0) > 1) {
+                bb.writeMethod4(Number(missionState.currCount ?? 0));
+            }
+            return;
+        }
+
+        // The client interprets this bit as "claimed/completed", not "ready to turn in".
+        bb.writeMethod11(state >= 3 ? 1 : 0, 1);
+        if (WorldEnter.missionUsesTimedProgressFields(missionDef)) {
+            bb.writeMethod11(Number(missionState.Tier ?? 0), 4);
+            bb.writeMethod4(Number(missionState.highscore ?? 0));
+            bb.writeMethod4(Number(missionState.Time ?? 0));
+        }
+    }
+
     private static getClassId(className: string): ClassID {
         switch ((className || '').toLowerCase()) {
             case 'rogue':
@@ -539,34 +575,7 @@ export class WorldEnter {
                     missionDef,
                     WorldEnter.asRecord(missionsState[missionId.toString()])
                 );
-                const state = Number(missionState.state ?? 0);
-
-                if (missionDef?.Tier) {
-                    bb.writeMethod11(state >= 3 ? 1 : 0, 1);
-                    continue;
-                }
-
-                const hasEntry = state !== 0;
-                bb.writeMethod11(hasEntry ? 1 : 0, 1);
-                if (!hasEntry) {
-                    continue;
-                }
-
-                const isReady = state >= 2;
-                bb.writeMethod11(isReady ? 1 : 0, 1);
-                if (!isReady) {
-                    if ((missionDef?.highscore ?? 0) > 1) {
-                        bb.writeMethod4(Number(missionState.currCount ?? 0));
-                    }
-                    continue;
-                }
-
-                bb.writeMethod11(state === 2 ? 1 : 0, 1);
-                if (WorldEnter.missionUsesTimedProgressFields(missionDef)) {
-                    bb.writeMethod11(Number(missionState.Tier ?? 0), 4);
-                    bb.writeMethod4(Number(missionState.highscore ?? 0));
-                    bb.writeMethod4(Number(missionState.Time ?? 0));
-                }
+                WorldEnter.writeMissionState(bb, missionDef, missionState);
             }
 
             const friends = normalizeFriendEntries(character.friends);

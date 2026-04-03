@@ -4,6 +4,7 @@ import { JsonAdapter } from '../database/JsonAdapter';
 import { AbilityHandler } from '../handlers/AbilityHandler';
 import { CharacterHandler } from '../handlers/CharacterHandler';
 import { MissionHandler } from '../handlers/MissionHandler';
+import { BitReader } from '../network/protocol/bitReader';
 
 function createCharacter(name: string): Character {
     return {
@@ -143,12 +144,141 @@ function testNewbieRoadLoginRepairsCompletedKeepQuestProgress(): void {
     assert.equal(character.questTrackerState, 100);
 }
 
+function testStoryRepairRestoresLostAtSeaTurnInWhenMissionIsMissing(): void {
+    const character = createCharacter('LostAtSeaRepair');
+    character.CurrentLevel = { name: 'CraftTown', x: 360, y: 1460 };
+    character.PreviousLevel = { name: 'NewbieRoad', x: 1421, y: 826 };
+    character.questTrackerState = 100;
+    character.missions = {};
+
+    const repair = MissionHandler.repairEarlyStoryOnLogin(character, 'CraftTown');
+
+    assert.equal(repair.didMutate, true);
+    assert.equal(repair.addedMissionId, 1);
+    assert.deepEqual(character.missions?.['1'], {
+        state: 2,
+        currCount: 1
+    });
+}
+
+function testStoryRepairUpgradesLostAtSeaTurnInInsideTutorialBoat(): void {
+    const character = createCharacter('LostAtSeaBoatRepair');
+    character.CurrentLevel = { name: 'TutorialBoat', x: 0, y: 0 };
+    character.PreviousLevel = { name: 'NewbieRoad', x: 1421, y: 826 };
+    character.questTrackerState = 100;
+    character.missions = {
+        '1': {
+            state: 1,
+            currCount: 0
+        }
+    };
+
+    const repair = MissionHandler.repairEarlyStoryOnLogin(character, 'TutorialBoat');
+
+    assert.equal(repair.didMutate, true);
+    assert.equal(Number(character.missions?.['1']?.state ?? 0), 2);
+    assert.equal(Number(character.missions?.['1']?.currCount ?? 0), 1);
+}
+
+function testMissionSyncDoesNotReplayQuestPopupsOnLogin(): void {
+    const character = createCharacter('QuestSync');
+    character.questTrackerState = 100;
+    character.missions = {
+        '1': {
+            state: 3,
+            currCount: 1,
+            claimed: 1,
+            complete: 1,
+            Tier: 5,
+            highscore: 209,
+            Time: 123456
+        },
+        '2': {
+            state: 1,
+            currCount: 0
+        },
+        '4': {
+            state: 2,
+            currCount: 0
+        }
+    };
+
+    const sentPackets: Array<{ id: number; payload: Buffer }> = [];
+    const client = {
+        character,
+        sendBitBuffer(id: number, bb: { toBuffer(): Buffer }): void {
+            sentPackets.push({ id, payload: bb.toBuffer() });
+        }
+    };
+
+    MissionHandler.syncMissionStateToClient(client as never);
+
+    assert.deepEqual(
+        sentPackets.map((packet) => packet.id),
+        [0xB7],
+        'mission sync should only refresh quest progress and must not replay mission popups during room/login sync'
+    );
+}
+
+function testBootstrappedStoryMissionSendsGoblinAssaultAssignment(): void {
+    const character = createCharacter('FreshQuest');
+    character.missions = {
+        '1': {
+            state: 1,
+            currCount: 0
+        }
+    };
+
+    const sentPackets: Array<{ id: number; payload: Buffer }> = [];
+    const client = {
+        character,
+        sendBitBuffer(id: number, bb: { toBuffer(): Buffer }): void {
+            sentPackets.push({ id, payload: bb.toBuffer() });
+        }
+    };
+
+    (CharacterHandler as any).sendBootstrappedStoryMission(client, 1);
+
+    const missionAdded = sentPackets.find((packet) => packet.id === 0x85);
+    assert.ok(missionAdded, 'bootstrapped story mission should send a mission-added packet');
+    const reader = new BitReader(missionAdded.payload);
+    assert.equal(reader.readMethod4(), 1, 'the bootstrapped mission should be Goblin Assault');
+    assert.equal(reader.readMethod15(), true, 'Goblin Assault should start in progress');
+}
+
+function testMissingBootstrappedMissionDoesNotReplayGoblinAssaultAssignment(): void {
+    const character = createCharacter('FreshQuestNoReplay');
+    character.missions = {
+        '1': {
+            state: 1,
+            currCount: 0
+        }
+    };
+
+    const sentPackets: Array<{ id: number; payload: Buffer }> = [];
+    const client = {
+        character,
+        sendBitBuffer(id: number, bb: { toBuffer(): Buffer }): void {
+            sentPackets.push({ id, payload: bb.toBuffer() });
+        }
+    };
+
+    (CharacterHandler as any).sendBootstrappedStoryMission(client, 0);
+
+    assert.equal(sentPackets.length, 0, 'no mission should be replayed when nothing was bootstrapped');
+}
+
 async function main(): Promise<void> {
     await testReloadCurrentCharacterFromSavePrefersFreshDiskState();
     await testReloadCurrentCharacterFromSaveKeepsUnsavedCharacterWhenMissingOnDisk();
     testAbilityRepairSyncsUnlockedActiveAbilityIntoLearnedAbilities();
     testCraftTownLoginRepairsCompletedKeepQuestProgress();
     testNewbieRoadLoginRepairsCompletedKeepQuestProgress();
+    testStoryRepairRestoresLostAtSeaTurnInWhenMissionIsMissing();
+    testStoryRepairUpgradesLostAtSeaTurnInInsideTutorialBoat();
+    testMissionSyncDoesNotReplayQuestPopupsOnLogin();
+    testBootstrappedStoryMissionSendsGoblinAssaultAssignment();
+    testMissingBootstrappedMissionDoesNotReplayGoblinAssaultAssignment();
     console.log('character_login_regression: ok');
 }
 

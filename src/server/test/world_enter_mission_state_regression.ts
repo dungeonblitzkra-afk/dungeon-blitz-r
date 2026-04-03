@@ -1,0 +1,74 @@
+import { strict as assert } from 'assert';
+import * as path from 'path';
+import { MissionLoader } from '../data/MissionLoader';
+import { MissionID } from '../data/runtime';
+import { BitBuffer } from '../network/protocol/bitBuffer';
+import { BitReader } from '../network/protocol/bitReader';
+import { WorldEnter } from '../utils/WorldEnter';
+
+function ensureDataLoaded(): void {
+    const dataDir = path.resolve(__dirname, '../data');
+    if (!MissionLoader.getMissionDef(MissionID.DefendTheShip)) {
+        MissionLoader.load(dataDir);
+    }
+}
+
+function encodeMissionState(missionId: number, missionState: Record<string, number>): Buffer {
+    const bb = new BitBuffer(false);
+    const missionDef = MissionLoader.getMissionDef(missionId);
+    (WorldEnter as any).writeMissionState(bb, missionDef, missionState);
+    return bb.toBuffer();
+}
+
+function testReadyToTurnInEncodesAsNotClaimed(): void {
+    const br = new BitReader(
+        encodeMissionState(MissionID.DefendTheShip, {
+            state: 2,
+            currCount: 1,
+            Tier: 5,
+            highscore: 209,
+            Time: 123456
+        })
+    );
+
+    assert.equal(br.readMethod15(), true, 'mission entry should be present');
+    assert.equal(br.readMethod15(), true, 'ready-to-turn-in story mission should still be encoded as ready');
+    assert.equal(
+        br.readMethod15(),
+        false,
+        'ready-to-turn-in story mission must not be serialized as already claimed'
+    );
+}
+
+function testClaimedEncodesAsClaimed(): void {
+    const br = new BitReader(
+        encodeMissionState(MissionID.DefendTheShip, {
+            state: 3,
+            currCount: 1,
+            Tier: 5,
+            highscore: 209,
+            Time: 123456,
+            claimed: 1,
+            complete: 1
+        })
+    );
+
+    assert.equal(br.readMethod15(), true, 'mission entry should be present');
+    assert.equal(br.readMethod15(), true, 'claimed story mission still uses the ready/complete branch');
+    assert.equal(br.readMethod15(), true, 'claimed story mission should serialize the claimed bit');
+}
+
+function main(): void {
+    ensureDataLoaded();
+    testReadyToTurnInEncodesAsNotClaimed();
+    testClaimedEncodesAsClaimed();
+    console.log('world_enter_mission_state_regression: ok');
+}
+
+try {
+    main();
+} catch (error) {
+    console.error('world_enter_mission_state_regression: failed');
+    console.error(error);
+    process.exitCode = 1;
+}

@@ -3199,6 +3199,10 @@ package
       {
          var _loc2_:uint = param1.method_4();
          this.var_1.method_1787(_loc2_);
+         if(_loc2_ == class_13.const_544)
+         {
+            this.var_1.SetNewTutorialStage(Game.const_306);
+         }
       }
       
       private function method_1795(param1:Packet) : void
@@ -3219,6 +3223,10 @@ package
             _loc3_ = param1.method_4();
          }
          this.var_1.method_1472(_loc4_,_loc2_,_loc3_);
+         if(_loc4_ == class_13.const_544)
+         {
+            this.var_1.SetNewTutorialStage(Game.const_313);
+         }
       }
       
       private function method_1122(param1:Packet) : void
@@ -3226,6 +3234,10 @@ package
          var _loc2_:uint = param1.method_4();
          var _loc3_:Boolean = param1.method_11();
          this.var_1.method_1380(_loc2_,_loc3_);
+         if(_loc2_ == class_13.const_831 && !_loc3_)
+         {
+            this.var_1.SetNewTutorialStage(Game.const_212);
+         }
       }
       
       public function method_1163(param1:Packet) : void

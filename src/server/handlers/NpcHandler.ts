@@ -10,6 +10,7 @@ import { BitBuffer } from '../network/protocol/bitBuffer';
 import { BitReader } from '../network/protocol/bitReader';
 import { getClientLevelScope } from '../core/LevelScope';
 import { RewardHandler } from './RewardHandler';
+import { MissionHandler } from './MissionHandler';
 
 const db = new JsonAdapter();
 
@@ -22,7 +23,7 @@ export class NpcHandler {
     private static readonly MISSION_READY_TO_TURN_IN = 2;
     private static readonly MISSION_CLAIMED = 3;
     private static readonly FIRST_MISSION_ID = MissionID.DefendTheShip;
-    private static readonly FIRST_MISSION_NPC_KEY = 'captainfink';
+    private static readonly FIRST_MISSION_NPC_KEY = 'nrcaptfink';
     private static readonly RETURN_DIALOGUE_BASE_MS = 10;
     private static readonly RETURN_DIALOGUE_CHAR_MS = 1;
     private static readonly DEFAULT_TURN_IN_STARS = 3;
@@ -59,6 +60,16 @@ export class NpcHandler {
                 client.pendingMissionTurnIns.has(NpcHandler.FIRST_MISSION_ID)
             ) {
                 return;
+            }
+
+            if (
+                npcKey === NpcHandler.FIRST_MISSION_NPC_KEY &&
+                NpcHandler.getMissionState(client.character, NpcHandler.FIRST_MISSION_ID) < NpcHandler.MISSION_CLAIMED
+            ) {
+                const storyRepair = MissionHandler.repairEarlyStoryOnLogin(client.character, levelName);
+                if (storyRepair.didMutate) {
+                    didMutate = true;
+                }
             }
 
             const matched = NpcHandler.findBestMission(client.character, npcKey);
@@ -206,7 +217,13 @@ export class NpcHandler {
             ) {
                 priority = 4;
                 dialogueId = 4;
-            } else if (npcKey === contactKey && state === NpcHandler.MISSION_IN_PROGRESS) {
+            } else if (
+                npcKey === contactKey &&
+                (
+                    state === NpcHandler.MISSION_IN_PROGRESS ||
+                    state === NpcHandler.MISSION_READY_TO_TURN_IN
+                )
+            ) {
                 priority = 3;
                 dialogueId = 3;
             } else if (
@@ -442,25 +459,9 @@ export class NpcHandler {
                 NpcHandler.MISSION_CLAIMED
             );
 
-            const followupMissionId = NpcHandler.autoAcceptFollowupMission(
-                client.character,
-                npcKey,
-                NpcHandler.FIRST_MISSION_ID
-            );
-
             // Сохраняем прогресс
             if (client.userId) {
                 await db.saveCharacters(client.userId, client.characters);
-            }
-
-            if (!client.socket.destroyed) {
-                if (followupMissionId) {
-                    NpcHandler.sendMissionAdded(
-                        client,
-                        followupMissionId,
-                        NpcHandler.getMissionState(client.character, followupMissionId)
-                    );
-                }
             }
         } finally {
             client.pendingMissionTurnIns.delete(NpcHandler.FIRST_MISSION_ID);
