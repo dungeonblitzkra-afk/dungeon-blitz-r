@@ -93,7 +93,7 @@ export class LevelHandler {
     ]);
     private static readonly GOBLIN_RIVER_BOSS_INTRO_DEFAULT_MS = 5000;
 
-    private static resolveDungeonPacketLevel(levelName: string, configuredLevel: number, character: Character): number {
+    private static resolveDungeonMapPacketLevel(levelName: string, configuredLevel: number, character: Character): number {
         if (!LevelConfig.isDungeonLevel(levelName)) {
             return configuredLevel;
         }
@@ -3195,6 +3195,9 @@ export class LevelHandler {
         LevelHandler.markRoomEventStarted(client, roomId);
 
         LevelHandler.relayToLevel(client, 0xA5, data);
+        for (const other of LevelHandler.forLevelRecipients(client, true)) {
+            MissionHandler.noteDungeonCutsceneStart(other, roomId);
+        }
     }
 
     static handleRoomInfoUpdate(client: Client, data: Buffer): void {
@@ -3441,8 +3444,8 @@ export class LevelHandler {
         const levelSpec = LevelConfig.get(targetLevel);
         const isHard = targetLevel.endsWith("Hard");
         const oldLevelSpec = LevelConfig.get(oldLevel);
-        const runtimeMapLevel = LevelHandler.resolveDungeonPacketLevel(targetLevel, levelSpec.mapId, hostChar);
-        const runtimeBaseLevel = LevelHandler.resolveDungeonPacketLevel(targetLevel, levelSpec.baseId, hostChar);
+        const runtimeMapLevel = LevelHandler.resolveDungeonMapPacketLevel(targetLevel, levelSpec.mapId, hostChar);
+        const runtimeBaseLevel = levelSpec.baseId;
         
         const pkt = WorldEnter.buildEnterWorldPacket(
             newToken,
@@ -3623,6 +3626,11 @@ export class LevelHandler {
                 ? authorityClient
                 : client;
             await MissionHandler.handleForcedDungeonBossCompletion(completionClient, ent);
+        }
+
+        if (isSelf && entState === EntityState.DEAD) {
+            const { CombatHandler } = require('./CombatHandler') as typeof import('./CombatHandler');
+            CombatHandler.notePlayerDeathState(client);
         }
 
         if (!client.playerSpawned || !client.currentLevel) {
