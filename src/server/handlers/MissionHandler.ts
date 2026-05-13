@@ -881,6 +881,13 @@ export class MissionHandler {
                 ) {
                     didMutate = true;
                 }
+
+                if (
+                    missionUpdate.newlyCompleted &&
+                    MissionHandler.claimMeyloursEmbersRewardAndPrimeGlades(client, missionUpdate)
+                ) {
+                    didMutate = true;
+                }
             }
 
             if (
@@ -1512,41 +1519,6 @@ export class MissionHandler {
             };
         }
 
-        for (let missionId = 1; missionId <= MissionLoader.getTotalMissions(); missionId++) {
-            if (MissionHandler.getMissionState(character, missionId) !== MissionHandler.MISSION_NOT_STARTED) {
-                continue;
-            }
-
-            const missionDef = MissionLoader.getMissionDef(missionId);
-            const missionDungeon = LevelConfig.normalizeLevelName(missionDef?.Dungeon) || String(missionDef?.Dungeon ?? '').trim();
-            if (!missionDef || !missionDungeon || missionDungeon !== normalizedCurrentLevel) {
-                continue;
-            }
-
-            if (!MissionHandler.canStartMission(character, missionDef)) {
-                continue;
-            }
-
-            const nextState = MissionHandler.missionRequiresTurnIn(missionDef)
-                ? MissionHandler.MISSION_READY_TO_TURN_IN
-                : MissionHandler.MISSION_CLAIMED;
-
-            MissionHandler.setMissionState(character, missionId, nextState, missionDef, {
-                currCount: Math.max(1, Number(missionDef.CompleteCount ?? 1)),
-                Tier: completion.stars,
-                highscore: completion.score,
-                Time: completion.completedAt
-            });
-            character.lastCompletedDungeonLevel = normalizedCurrentLevel;
-            return {
-                missionId,
-                state: nextState,
-                newlyCompleted: true,
-                persistedStars: completion.stars,
-                persistedScore: completion.score
-            };
-        }
-
         return {
             missionId: 0,
             state: MissionHandler.MISSION_NOT_STARTED,
@@ -1662,6 +1634,51 @@ export class MissionHandler {
         return true;
     }
 
+    private static claimMeyloursEmbersRewardAndPrimeGlades(
+        client: Client,
+        missionUpdate: DungeonMissionUpdateResult
+    ): boolean {
+        if (!client.character) {
+            return false;
+        }
+
+        const followupMissionId =
+            missionUpdate.missionId === MissionID.CutToTheHeart
+                ? MissionID.HeadToTheGlades
+                : missionUpdate.missionId === MissionID.CutToTheHeartHard
+                    ? MissionID.HeadToTheGladesHard
+                    : 0;
+        if (!followupMissionId) {
+            return false;
+        }
+
+        const completedMissionDef = MissionLoader.getMissionDef(missionUpdate.missionId);
+        const followupMissionDef = MissionLoader.getMissionDef(followupMissionId);
+        if (!completedMissionDef || !followupMissionDef) {
+            return false;
+        }
+
+        MissionHandler.grantMissionRewards(client, completedMissionDef);
+
+        if (MissionHandler.getMissionState(client.character, followupMissionId) !== MissionHandler.MISSION_NOT_STARTED) {
+            return true;
+        }
+        if (!MissionHandler.canStartMission(client.character, followupMissionDef)) {
+            return true;
+        }
+
+        const initialState = MissionHandler.getInitialMissionState(followupMissionDef);
+        MissionHandler.setMissionState(
+            client.character,
+            followupMissionId,
+            initialState,
+            followupMissionDef,
+            { currCount: 0 }
+        );
+        MissionHandler.sendMissionAdded(client, followupMissionId, initialState);
+        return true;
+    }
+
     private static grantMissionRewards(client: Client, missionDef: MissionDef): void {
         if (!client.character) {
             return;
@@ -1681,7 +1698,7 @@ export class MissionHandler {
         }
     }
 
-    private static canStartMission(character: Character, missionDef: MissionDef): boolean {
+    static canStartMission(character: Character, missionDef: MissionDef): boolean {
         if (!MissionHandler.isMissionZoneUnlocked(character, missionDef)) {
             return false;
         }
