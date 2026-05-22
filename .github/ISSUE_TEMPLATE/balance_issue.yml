@@ -1,6 +1,6 @@
 name: Balance issue
 description: Report tuning problems with rewards, drops, combat, abilities, or progression.
-title: "[Balance]: "
+title: ""
 labels: ["balance", "gameplay"]
 type: Chore
 body:

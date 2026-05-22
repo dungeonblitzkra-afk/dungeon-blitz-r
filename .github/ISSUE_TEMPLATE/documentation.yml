@@ -1,6 +1,6 @@
 name: Documentation
 description: Report missing, unclear, or outdated project documentation.
-title: "[Docs]: "
+title: ""
 type: Documentation
 body:
   - type: textarea

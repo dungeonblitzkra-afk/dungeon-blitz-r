@@ -1,6 +1,6 @@
 name: Localization issue
 description: Report a missing, incorrect, or awkward translation.
-title: "[Localization]: "
+title: ""
 labels: ["localization"]
 type: Bug
 body:

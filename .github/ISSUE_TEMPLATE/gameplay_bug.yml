@@ -1,6 +1,6 @@
 name: Gameplay bug
 description: Report a quest, dungeon, combat, ability, or progression problem.
-title: "[Gameplay]: "
+title: ""
 labels: ["gameplay"]
 type: Bug
 body:
