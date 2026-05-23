@@ -6,6 +6,7 @@ import { GlobalState } from '../core/GlobalState';
 import { EntityTeam } from '../core/Entity';
 import { JsonAdapter } from '../database/JsonAdapter';
 import { LevelConfig } from '../core/LevelConfig';
+import { Config } from '../core/config';
 import { GuildHandler } from './GuildHandler';
 import { LevelHandler } from './LevelHandler';
 import { MissionHandler } from './MissionHandler';
@@ -54,6 +55,7 @@ export interface DiscordPartyJoinResult {
 
 export class SocialHandler {
     private static readonly MAX_PARTY_SIZE = 4;
+    private static readonly LOCALIZATION_RELOAD_PREFIX = 'DB_LOCALIZATION_RELOAD:';
     private static readonly FRIEND_REQUEST_PROMPT_TTL_MS = 5 * 60_000;
     private static readonly TELEPORT_COMMAND_PREFIXES = ['/teleport:', 'teleport:'];
     private static readonly TELEPORT_COST_GOLD = 20_000;
@@ -157,6 +159,33 @@ export class SocialHandler {
         const bb = new BitBuffer(false);
         bb.writeMethod13(text);
         target.sendBitBuffer(0x44, bb);
+    }
+
+    private static normalizeReloadGender(gender: unknown): string {
+        const normalized = String(gender ?? '').trim().toLowerCase();
+        return normalized === 'male' || normalized === 'female' ? normalized : '';
+    }
+
+    private static buildLocalizationReloadUrl(language: string, gender?: string): string {
+        const portSuffix = Config.STATIC_PORT === 80 ? '' : `:${Config.STATIC_PORT}`;
+        const url = new URL(`http://${Config.HOST}${portSuffix}/p/cbp/DungeonBlitz.swf`);
+        url.searchParams.set('fv', 'cdb');
+        url.searchParams.set('gv', 'cdb');
+        url.searchParams.set('lang', language);
+        if (language === 'pt-br') {
+            const normalizedGender = SocialHandler.normalizeReloadGender(gender);
+            if (normalizedGender) {
+                url.searchParams.set('gender', normalizedGender);
+            }
+        }
+        return url.toString();
+    }
+
+    private static sendLocalizationReload(target: Client | null | undefined, language: string): void {
+        SocialHandler.sendChatStatus(
+            target,
+            `${SocialHandler.LOCALIZATION_RELOAD_PREFIX}${SocialHandler.buildLocalizationReloadUrl(language, target?.character?.gender)}`
+        );
     }
 
     private static sendGoldLoss(client: Client, amount: number): void {
@@ -771,16 +800,61 @@ export class SocialHandler {
     }
 
     private static isEnemyRoomThought(client: Client, entityId: number): boolean {
-        const entity = client.entities?.get?.(entityId);
+        const entity = SocialHandler.getRoomThoughtEntity(client, entityId);
         return Number(entity?.team ?? 0) === EntityTeam.ENEMY;
     }
 
-    private static translateRoomThought(client: Client, entityId: number, text: string): string {
+    private static getRoomThoughtEntity(client: Client, entityId: number): any {
+        return (
+            client.entities?.get?.(entityId) ??
+            GlobalState.levelEntities.get(getClientLevelScope(client))?.get(entityId) ??
+            GlobalState.levelEntities.get(String(client.currentLevel ?? ''))?.get(entityId)
+        );
+    }
+
+    private static isWispThoughtFragment(client: Client, entityId: number, text: string): boolean {
+        const entityName = String(SocialHandler.getRoomThoughtEntity(client, entityId)?.name ?? '');
+        return /^(?:WispDiamond|WispEmerald|WispRuby)$/.test(entityName) &&
+            /^(?:Why|How|What)\?$/.test(String(text ?? '').trim());
+    }
+
+    private static resolveRoomThoughtEntityId(client: Client, entityId: number, text: string): number {
+        const playerEntityId = Number(client.clientEntID ?? 0);
+        if (
+            playerEntityId > 0 &&
+            entityId !== playerEntityId &&
+            SocialHandler.isEnemyRoomThought(client, entityId) &&
+            !SocialHandler.isWispThoughtFragment(client, entityId, text) &&
+            DialogueTranslationLoader.isPlayerRoomThoughtText(text)
+        ) {
+            return playerEntityId;
+        }
+
+        return entityId;
+    }
+
+    private static translateRoomThought(client: Client, entityId: number, text: string, target: Client = client): string {
         return DialogueTranslationLoader.translateText(
             text,
-            SocialHandler.getDialogueLanguage(client.character),
-            { fallbackToGeneric: SocialHandler.isEnemyRoomThought(client, entityId) }
+            SocialHandler.getDialogueLanguage(target.character),
+            {
+                fallbackToGeneric: SocialHandler.isEnemyRoomThought(client, entityId),
+                playerClass: target.character?.class,
+                playerGender: target.character?.gender
+            }
         );
+    }
+
+    private static relayRoomThought(client: Client, entityId: number, text: string): void {
+        for (const other of SocialHandler.forLevelRecipients(client, true)) {
+            other.send(
+                0x76,
+                SocialHandler.buildRoomThoughtPayload(
+                    entityId,
+                    SocialHandler.translateRoomThought(client, entityId, text, other)
+                )
+            );
+        }
     }
 
     private static getPartyForName(name: string): { partyId: number; group: PartyGroup } | null {
@@ -1170,12 +1244,30 @@ export class SocialHandler {
         }
 
         if (client.character) {
-            const match = /^\/lang:\s*(tr|en)\s*$/i.exec(message);
+            const match = /^[\/\\]lang:\s*(tr|en|br|ptbr)\s*$/i.exec(message);
             if (match) {
-                const nextLanguage = match[1].toLowerCase();
+                const requestedLanguage = match[1].toLowerCase();
+                const nextLanguage = /^(?:br|ptbr)$/.test(requestedLanguage) ? 'pt-br' : requestedLanguage;
                 client.character.dialogueLanguage = nextLanguage;
 
                 if (client.userId) {
+                    for (const session of GlobalState.getActiveSessionsByUserId(client.userId)) {
+                        session.dialogueLanguage = nextLanguage;
+                        if (session.character) {
+                            session.character.dialogueLanguage = nextLanguage;
+                        }
+                        for (const character of session.characters) {
+                            character.dialogueLanguage = nextLanguage;
+                        }
+                        const currentName = SocialHandler.normalizeName(session.character?.name);
+                        const characterIndex = session.characters.findIndex((character) =>
+                            SocialHandler.normalizeName(character.name) === currentName
+                        );
+                        if (session.character && characterIndex >= 0) {
+                            session.characters[characterIndex] = session.character;
+                        }
+                    }
+                    await db.setDialogueLanguage(client.userId, nextLanguage);
                     await db.saveCharacters(client.userId, client.characters);
                 }
 
@@ -1183,8 +1275,22 @@ export class SocialHandler {
                     client,
                     nextLanguage === 'tr'
                         ? 'NPC dialog dili Turkce olarak ayarlandi.'
+                        : nextLanguage === 'pt-br'
+                            ? 'Dialogos de NPC definidos para Portugues do Brasil.'
                         : 'NPC dialog language set to English.'
                 );
+                SocialHandler.sendChatStatus(
+                    client,
+                    nextLanguage === 'pt-br'
+                        ? 'Idioma salvo. No Adobe Flash Player, reinicie o jogo para aplicar tudo.'
+                        : 'Language saved. In Adobe Flash Player, restart the game to apply everything.'
+                );
+                SocialHandler.sendLocalizationReload(client, nextLanguage);
+                return;
+            }
+
+            if (/^[\/\\]lang(?::|\s|$)/i.test(message)) {
+                SocialHandler.sendChatStatus(client, 'Use /lang:en, /lang:tr ou /lang:ptbr.');
                 return;
             }
         }
@@ -1947,14 +2053,11 @@ export class SocialHandler {
         const br = new BitReader(data);
         const entityId = br.readMethod4();
         const text = br.readMethod13();
-        const payload = SocialHandler.buildRoomThoughtPayload(
-            entityId,
-            SocialHandler.translateRoomThought(client, entityId, text)
-        );
-        LevelHandler.maybeStartGoblinRiverBossIntroLock(client, entityId, text);
+        const speakerEntityId = SocialHandler.resolveRoomThoughtEntityId(client, entityId, text);
+        LevelHandler.maybeStartGoblinRiverBossIntroLock(client, speakerEntityId, text);
         MissionHandler.noteDungeonSkitActivity(client);
 
-        SocialHandler.relayToLevel(client, 0x76, payload, true);
+        SocialHandler.relayRoomThought(client, speakerEntityId, text);
     }
 
     static handleStartSkit(client: Client, data: Buffer): void {
@@ -1965,14 +2068,11 @@ export class SocialHandler {
         const entityId = playerThought && client.clientEntID > 0
             ? client.clientEntID
             : sourceEntityId;
-        const payload = SocialHandler.buildRoomThoughtPayload(
-            entityId,
-            SocialHandler.translateRoomThought(client, entityId, text)
-        );
+        const speakerEntityId = SocialHandler.resolveRoomThoughtEntityId(client, entityId, text);
         LevelHandler.maybeStartGoblinRiverBossIntroLock(client, sourceEntityId, text);
         MissionHandler.noteDungeonSkitActivity(client);
 
-        SocialHandler.relayToLevel(client, 0x76, payload, true);
+        SocialHandler.relayRoomThought(client, speakerEntityId, text);
     }
 
     static handleEmoteBegin(client: Client, data: Buffer): void {
