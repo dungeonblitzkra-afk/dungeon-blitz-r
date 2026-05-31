@@ -518,11 +518,11 @@ async function testBossRunAccuracyStartsAtFirstPreBossHit(): Promise<void> {
 
     const result = await finalizeAndReadResult(client);
     assertResultMatchesTrackerSummary(client, result);
-    assert.equal(client.dungeonRun.finalizedStats?.accuracyWindowSource, 'pre_boss_hit', 'pre-boss combat should anchor the accuracy window at the first hit');
+    assert.equal(client.dungeonRun.finalizedStats?.accuracyWindowSource, 'boss_cutscene', 'boss cutscene should reset scoring to the boss-room window');
     assert.equal(
         result.accuracy,
-        client.dungeonRun.finalizedStats!.scoreSummary.unlockedCap.accuracy,
-        'Wolf\'s End full clears should clamp accuracy to max after the run reaches full completion'
+        Math.round(client.dungeonRun.finalizedStats!.scoreSummary.unlockedCap.accuracy / 2),
+        'boss cutscene scoring should ignore pre-boss combat and keep only boss-window accuracy'
     );
 }
 

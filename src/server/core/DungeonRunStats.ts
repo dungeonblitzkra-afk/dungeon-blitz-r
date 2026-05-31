@@ -661,9 +661,10 @@ function clonePendingShots(source: Map<string, PendingShot>): Map<string, Pendin
 function startAccuracyWindow(
     stats: DungeonRunStats,
     source: DungeonRunAccuracyWindowSource,
-    startTime: number
+    startTime: number,
+    forceReset: boolean = false
 ): void {
-    if (stats.accuracyWindowActive) {
+    if (stats.accuracyWindowActive && !forceReset) {
         return;
     }
 
@@ -832,6 +833,88 @@ function activateBossRunScoreWindow(stats: DungeonRunStats, client: Client, room
         }
     }
 
+    syncStatsFromAccumulator(stats);
+}
+
+function getDungeonRunEntityId(entity: any): number {
+    return Math.max(0, Math.round(Number(entity?.id ?? entity?.entId ?? entity?.EntityID ?? 0)));
+}
+
+function isDungeonRunEntityDefeated(entity: any): boolean {
+    return Boolean(entity?.dead) ||
+        Number(entity?.hp ?? 1) <= 0 ||
+        Number(entity?.entState ?? 0) === 6;
+}
+
+function getDungeonRunEntityRoomId(entity: any): number {
+    const roomId = Number(entity?.roomId ?? entity?.RoomID ?? entity?.room_id ?? 0);
+    return Number.isFinite(roomId) && roomId > 0 ? Math.round(roomId) : 0;
+}
+
+function forceBossRoomScoreWindow(stats: DungeonRunStats, client: Client, roomId: number, bossId?: number | null): void {
+    if (stats.finalizedAt || roomId < 0) {
+        return;
+    }
+
+    const now = Date.now();
+    const previousScoreMode = stats.scoreMode;
+    const previousKilledEnemyIds = cloneSet(stats.windowAccumulator.killedEnemyIds);
+    stats.scoreMode = 'boss_run';
+    stats.scoreWindowActive = true;
+    stats.bossCutsceneTriggeredAt ??= now;
+    stats.scoreWindowStartTime = stats.bossCutsceneTriggeredAt;
+    stats.windowAccumulator = createAccumulator(stats.bossCutsceneTriggeredAt);
+    if (previousScoreMode === 'pending' || !stats.accuracyWindowActive) {
+        startAccuracyWindow(stats, 'boss_cutscene', stats.bossCutsceneTriggeredAt, true);
+    } else {
+        stats.accuracyWindowSource = 'boss_cutscene';
+        stats.accuracyWindowStartTime = stats.bossCutsceneTriggeredAt;
+    }
+
+    const roomEntities = new Map<number, any>();
+    for (const entity of client.entities.values()) {
+        const entityId = getDungeonRunEntityId(entity);
+        if (entityId > 0 && sharesRoomIds(roomId, getDungeonRunEntityRoomId(entity))) {
+            roomEntities.set(entityId, entity);
+        }
+    }
+    for (const entity of GlobalState.levelEntities.get(stats.levelScope)?.values() ?? []) {
+        const entityId = getDungeonRunEntityId(entity);
+        if (entityId > 0 && sharesRoomIds(roomId, getDungeonRunEntityRoomId(entity))) {
+            roomEntities.set(entityId, entity);
+        }
+    }
+
+    if (bossId && !roomEntities.has(bossId)) {
+        const bossEntity =
+            client.entities.get(bossId) ??
+            GlobalState.levelEntities.get(stats.levelScope)?.get(bossId) ??
+            Array.from(client.entities.values()).find((entity) => getDungeonRunEntityId(entity) === bossId);
+        if (bossEntity) {
+            roomEntities.set(bossId, bossEntity);
+        }
+    }
+
+    for (const [entityId, entity] of roomEntities.entries()) {
+        noteAccumulatorEntity(stats.windowAccumulator, entityId, entity, stats.dungeonCompleted, stats.completionPercent);
+        const kind = classifyDungeonRunEntity(entity);
+        if (kind.enemy && (previousKilledEnemyIds.has(entityId) || isDungeonRunEntityDefeated(entity))) {
+            stats.windowAccumulator.killedEnemyIds.add(entityId);
+        }
+        if (kind.objective && isDungeonRunEntityDefeated(entity)) {
+            stats.windowAccumulator.completedObjectiveIds.add(entityId);
+        }
+        if (kind.boss && GameData.getEntityRank(entity) !== 'MiniBoss' && isDungeonRunEntityDefeated(entity)) {
+            stats.bossKilled = true;
+            stats.bossDefeatTime ??= now;
+            ensureBossFightStarted(stats, stats.bossDefeatTime);
+        }
+    }
+
+    refreshAccumulatorFields(stats.windowAccumulator, stats.dungeonCompleted, stats.completionPercent);
+    recordDungeonRunEvent(stats, 'boss_cutscene', {
+        roomId
+    });
     syncStatsFromAccumulator(stats);
 }
 
@@ -1262,6 +1345,14 @@ export function noteDungeonRunBossCutscene(
     roomId: number,
     bossId?: number | null
 ): void {
+    activateDungeonRunBossRoomStats(levelScope, roomId, bossId);
+}
+
+export function activateDungeonRunBossRoomStats(
+    levelScope: string | null | undefined,
+    roomId: number,
+    bossId?: number | null
+): void {
     const normalizedScope = String(levelScope ?? '').trim();
     if (!normalizedScope) {
         return;
@@ -1277,14 +1368,7 @@ export function noteDungeonRunBossCutscene(
             continue;
         }
 
-        stats.bossCutsceneTriggeredAt ??= Date.now();
-        if (stats.scoreMode === 'pending' && !stats.preBossEncounterEngaged) {
-            activateBossRunScoreWindow(stats, session, roomId, bossId);
-        } else {
-            recordDungeonRunEvent(stats, 'boss_cutscene', {
-                roomId
-            });
-        }
+        forceBossRoomScoreWindow(stats, session, roomId, bossId);
     }
 }
 
