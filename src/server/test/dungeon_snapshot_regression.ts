@@ -60,7 +60,7 @@ function ensureLevelConfigLoaded(): void {
     }
 }
 
-function testDungeonDisconnectPersistsResumeSnapshot(): void {
+function testDungeonDisconnectClearsResumeSnapshotAndKeepsSafeReturn(): void {
     const client = new Client(
         new net.Socket(),
         {
@@ -92,17 +92,7 @@ function testDungeonDisconnectPersistsResumeSnapshot(): void {
     (client as any).repairDungeonLocationBeforeSave();
 
     const snapshot = getStoredDungeonSnapshot(character);
-    assert.ok(snapshot, 'disconnecting inside a dungeon should persist a resume snapshot');
-    assert.equal(snapshot.levelName, 'JC_Mission1');
-    assert.equal(snapshot.levelInstanceId, 'jc-mission1-run');
-    assert.equal(snapshot.x, 8120);
-    assert.equal(snapshot.y, -144);
-    assert.equal(snapshot.entryLevel, 'JadeCity');
-    assert.equal(snapshot.entryX, 10399);
-    assert.equal(snapshot.entryY, 1043);
-    assert.equal(snapshot.currentRoomId, 8);
-    assert.deepEqual(snapshot.startedRoomIds, [2, 8]);
-    assert.equal(snapshot.questProgress, 64);
+    assert.equal(snapshot, null, 'refreshing inside a dungeon should not persist a resume snapshot');
     assert.deepEqual(
         character.CurrentLevel,
         { name: 'JadeCity', x: 10399, y: 1043 },
@@ -110,7 +100,7 @@ function testDungeonDisconnectPersistsResumeSnapshot(): void {
     );
 }
 
-function testStoredDungeonSnapshotBuildsEnterWorldResumeState(): void {
+function testStoredDungeonSnapshotIsIgnoredOnEnterWorld(): void {
     const character = createCharacter('SnapshotHero');
     character.DungeonSnapshot = {
         levelName: 'JC_Mission1',
@@ -135,23 +125,21 @@ function testStoredDungeonSnapshotBuildsEnterWorldResumeState(): void {
     });
 
     const pendingEntry = GlobalState.pendingWorld.get(50002);
-    assert.ok(pendingEntry, 'stored dungeon snapshot should create an enter-world pending transfer');
-    assert.equal(pendingEntry.targetLevel, 'JC_Mission1');
-    assert.equal(pendingEntry.previousLevel, 'JadeCity');
-    assert.equal(pendingEntry.levelInstanceId, 'jc-mission1-run');
-    assert.equal(pendingEntry.newX, 8120);
-    assert.equal(pendingEntry.newY, -144);
+    assert.ok(pendingEntry, 'enter-world should still create a pending transfer');
+    assert.equal(pendingEntry.targetLevel, 'JadeCity');
+    assert.equal(pendingEntry.previousLevel, 'WolfsEnd');
+    assert.equal(pendingEntry.levelInstanceId, undefined);
+    assert.equal(pendingEntry.newX, 10399);
+    assert.equal(pendingEntry.newY, 1043);
     assert.equal(pendingEntry.newHasCoord, true);
-    assert.equal(pendingEntry.syncAnchorStartedAt, 1700000000);
-    assert.equal(pendingEntry.syncAnchorToken, 50002);
-    assert.equal(pendingEntry.syncAnchorCharacterName, 'SnapshotHero');
-    assert.equal(pendingEntry.syncEntryLevel, 'JadeCity');
-    assert.equal(pendingEntry.syncEntryX, 10399);
-    assert.equal(pendingEntry.syncEntryY, 1043);
-    assert.equal(pendingEntry.syncEntryHasCoord, true);
-    assert.equal(pendingEntry.syncRoomId, 8);
-    assert.deepEqual(pendingEntry.syncStartedRoomIds, [2, 8]);
-    assert.equal(pendingEntry.syncQuestProgress, 64);
+    assert.equal(pendingEntry.syncAnchorStartedAt, undefined);
+    assert.equal(pendingEntry.syncAnchorToken, undefined);
+    assert.equal(pendingEntry.syncAnchorCharacterName, undefined);
+    assert.equal(pendingEntry.syncEntryLevel, undefined);
+    assert.equal(pendingEntry.syncRoomId, undefined);
+    assert.equal(pendingEntry.syncStartedRoomIds, undefined);
+    assert.equal(pendingEntry.syncQuestProgress, undefined);
+    assert.equal(getStoredDungeonSnapshot(character), null, 'stale stored dungeon snapshots should be cleared before entering world');
 }
 
 function testOverworldSaveClearsStoredDungeonSnapshot(): void {
@@ -186,10 +174,10 @@ function main(): void {
         ensureLevelConfigLoaded();
 
         resetGlobalState();
-        testDungeonDisconnectPersistsResumeSnapshot();
+        testDungeonDisconnectClearsResumeSnapshotAndKeepsSafeReturn();
 
         resetGlobalState();
-        testStoredDungeonSnapshotBuildsEnterWorldResumeState();
+        testStoredDungeonSnapshotIsIgnoredOnEnterWorld();
 
         resetGlobalState();
         testOverworldSaveClearsStoredDungeonSnapshot();

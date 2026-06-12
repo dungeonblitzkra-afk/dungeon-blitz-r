@@ -142,13 +142,14 @@ export class CharacterHandler {
     }
 
     private static repairUnsafeSavedDungeonLocation(character: Character): boolean {
+        let didMutate = clearStoredDungeonSnapshot(character);
         const safeReturn = LevelConfig.resolveDungeonSafeReturn(
             character.CurrentLevel?.name,
             undefined,
             character
         );
         if (!safeReturn) {
-            return false;
+            return didMutate;
         }
 
         character.CurrentLevel = {
@@ -156,7 +157,8 @@ export class CharacterHandler {
             x: safeReturn.x,
             y: safeReturn.y
         };
-        return true;
+        didMutate = true;
+        return didMutate;
     }
 
     private static isSessionStale(session: Client): boolean {
