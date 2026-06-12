@@ -351,20 +351,28 @@ export class SocialHandler {
             return false;
         }
 
+        const normalizedEntry = {
+            name: String(entry.name ?? '').trim(),
+            isRequest: Boolean(entry.isRequest)
+        };
+        if (!normalizedEntry.name) {
+            return false;
+        }
+
         const friends = SocialHandler.getFriendEntries(character);
-        const index = SocialHandler.findFriendIndex(character, entry.name);
+        const index = SocialHandler.findFriendIndex(character, normalizedEntry.name);
         if (index >= 0) {
             const current = friends[index];
-            if (current.name === entry.name && current.isRequest === entry.isRequest) {
+            if (current.name === normalizedEntry.name && current.isRequest === normalizedEntry.isRequest) {
                 return false;
             }
 
-            friends[index] = { ...entry };
+            friends[index] = normalizedEntry;
             character.friends = friends;
             return true;
         }
 
-        character.friends = [...friends, { ...entry }];
+        character.friends = [...friends, normalizedEntry];
         return true;
     }
 
@@ -387,15 +395,16 @@ export class SocialHandler {
     }
 
     private static buildFriendStatusPayload(friendName: string, isRequest: boolean, session: Client | null): Buffer {
+        const normalizedFriendName = String(friendName ?? '').trim();
         const bb = new BitBuffer(false);
-        bb.writeMethod13(friendName);
+        bb.writeMethod13(normalizedFriendName);
         bb.writeMethod15(isRequest);
 
         const online = Boolean(session?.character);
         bb.writeMethod15(online);
         if (online && session?.character) {
-            const displayName = session.character.name;
-            const hasCustomCharacterName = displayName !== friendName;
+            const displayName = String(session.character.name ?? '').trim() || normalizedFriendName;
+            const hasCustomCharacterName = displayName !== normalizedFriendName;
             bb.writeMethod15(hasCustomCharacterName);
             if (hasCustomCharacterName) {
                 bb.writeMethod13(displayName);
