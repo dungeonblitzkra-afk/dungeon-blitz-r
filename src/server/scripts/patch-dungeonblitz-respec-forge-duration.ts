@@ -1,3 +1,4 @@
+import * as fs from "fs";
 import * as path from "path";
 import {
   applyPatchesToBody,
@@ -14,17 +15,11 @@ import {
   writeU30,
 } from "./swfPatchUtils";
 
-const DEFAULT_SWF = path.resolve(
-  __dirname,
-  "..",
-  "..",
-  "client",
-  "content",
-  "localhost",
-  "p",
-  "cbp",
-  "DungeonBlitz.swf",
-);
+const DEFAULT_SWF_CANDIDATES = [
+  path.resolve(__dirname, "..", "..", "client", "content", "localhost", "p", "cbp", "DungeonBlitz.swf"),
+  path.resolve(__dirname, "..", "..", "..", "client", "content", "localhost", "p", "cbp", "DungeonBlitz.swf"),
+];
+const DEFAULT_SWF = DEFAULT_SWF_CANDIDATES.find((candidate) => fs.existsSync(candidate)) ?? DEFAULT_SWF_CANDIDATES[0];
 
 const RESPEC_FORGE_SECONDS = 259200;
 
@@ -47,7 +42,7 @@ function parseArgs(argv: string[]): { swfPath: string; verify: boolean } {
         "Usage:",
         "  ts-node src/server/scripts/patch-dungeonblitz-respec-forge-duration.ts [--verify] [--swf <path>]",
         "",
-        "Patches DungeonBlitz.swf so Respec Stone forge progress uses three days",
+        "Patches DungeonBlitz.swf so Respec Stone forge progress uses 3 days",
         "instead of the old four-day class_64.const_1073 value or 3-minute",
         "Game.const_181 fallback.",
       ].join("\n"));
@@ -143,7 +138,7 @@ function findPatches(swfPath: string): {
         start: methodBody.codeStart + first.offset,
         end: methodBody.codeStart + second.offset + second.size,
         data: nopPaddedPushInt(threeDayIndex, oldLength),
-        detail: "return three days for Respec Stone extended forge duration",
+        detail: "return 3 days for Respec Stone extended forge duration",
       });
       oldExtendedCount += 1;
       continue;
@@ -163,7 +158,7 @@ function findPatches(swfPath: string): {
           start: methodBody.codeStart + first.offset,
           end: methodBody.codeStart + second.offset + second.size,
           data: nopPaddedPushInt(threeDayIndex, oldLength),
-          detail: "return three days for Respec Stone initial local forge duration",
+          detail: "return 3 days for Respec Stone initial local forge duration",
         });
         oldFallbackCount += 1;
       }
