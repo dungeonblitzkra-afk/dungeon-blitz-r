@@ -48,6 +48,7 @@
     "user_id": 12
   },
   {
+<<<<<<< Updated upstream
     "email": "urmom@gmail.com",
     "user_id": 13
   },
@@ -62,5 +63,9 @@
   {
     "email": "dwadaw@gmail.com",
     "user_id": 16
+=======
+    "email": "dungeonblitzsadaw@gmail.com",
+    "user_id": 13
+>>>>>>> Stashed changes
   }
 ]
